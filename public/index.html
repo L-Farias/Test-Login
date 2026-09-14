@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ERP Seguro com PDV</title>
+    <!-- Ligando o arquivo de estilo externo -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav id="navbar">
+        <h2>ERP & PDV</h2>
+        <div class="nav-links">
+            <button onclick="navegarPara('produtos')">Produtos</button>
+            <button onclick="navegarPara('carrinho')">Carrinho (<span id="carrinho-contador">0</span>)</button>
+            <button onclick="navegarPara('usuarios')">Usuários</button>
+            <button onclick="fazerLogout()" class="btn-perigo">Sair</button>
+        </div>
+    </nav>
+
+    <!-- TELA: LOGIN -->
+    <main id="tela-login" class="tela ativa">
+        <div class="card" style="max-width: 400px; margin: 10vh auto;">
+            <h2>Acesso ao Sistema</h2>
+            <div id="erro-login" class="erro"></div>
+            <form id="form-login">
+                <p style="font-size: 0.8rem; margin-bottom: 10px; color: #666;">
+                    Login não deve iniciar com símbolos.<br>Senha exige números e símbolos.
+                </p>
+                <div class="form-group">
+                    <input type="text" id="login-user" placeholder="Usuário (ex: admin)" required>
+                </div>
+                <div class="form-group">
+                    <input type="password" id="login-pass" placeholder="Senha (ex: Admin@2026)" required>
+                </div>
+                <button type="submit" class="btn" style="width: 100%;">Entrar</button>
+            </form>
+        </div>
+    </main>
+
+    <!-- TELA: PRODUTOS -->
+    <main id="tela-produtos" class="tela">
+        <div class="card">
+            <h2>Produtos Disponíveis</h2>
+            <table id="tabela-produtos">
+                <thead><tr><th>Nome</th><th>Preço</th><th>Ação</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- TELA: CARRINHO -->
+    <main id="tela-carrinho" class="tela">
+        <div class="card">
+            <h2>Seu Carrinho</h2>
+            <div id="mensagem-checkout"></div>
+            <table id="tabela-carrinho">
+                <thead><tr><th>Nome</th><th>Qtd</th><th>Preço Unit.</th><th>Subtotal</th></tr></thead>
+                <tbody></tbody>
+            </table>
+            <h3 style="margin-top: 1rem; text-align: right;">Total: R$ <span id="total-carrinho">0.00</span></h3>
+            
+            <div style="margin-top: 2rem; background: #F1F5F9; padding: 1rem; border-radius: 8px;">
+                <h3>Realizar Pagamento</h3>
+                <div class="form-group" style="max-width: 300px; margin-top: 10px;">
+                    <input type="number" step="0.01" id="valor-pago" placeholder="Valor exato (Ex: 2899.00)">
+                </div>
+                <button onclick="finalizarCompra()" class="btn">Finalizar Compra</button>
+            </div>
+        </div>
+    </main>
+
+    <!-- TELA: USUÁRIOS -->
+    <main id="tela-usuarios" class="tela">
+        <div class="card">
+            <h2>Criar Novo Usuário</h2>
+            <form id="form-usuario" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <input type="text" id="usr-nome" placeholder="Nome Completo" required style="padding: 10px; flex: 1;">
+                <input type="text" id="usr-login" placeholder="Login" required style="padding: 10px; flex: 1;">
+                <input type="password" id="usr-senha" placeholder="Senha Forte" required style="padding: 10px; flex: 1;">
+                <button type="submit" class="btn">Registrar</button>
+            </form>
+        </div>
+        
+        <!-- Tabela de visualização adicionada conforme solicitado -->
+        <div class="card">
+            <h2>Usuários do Sistema</h2>
+            <table id="tabela-usuarios">
+                <thead><tr><th>ID</th><th>Nome</th><th>Login</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- LÓGICA DO FRONTEND -->
+    <script>
+        let carrinho = [];
+
+        function getAuthHeaders() { 
+            return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sessionStorage.getItem('token') }; 
+        }
+
+// --- SISTEMA DE ROTEAMENTO (HISTORY API) ---
+        
+        // 1. Atualizamos o navegarPara para alterar a URL
+        function navegarPara(rota, adicionarAoHistorico = true) {
+            document.querySelectorAll('.tela').forEach(t => t.classList.remove('ativa'));
+            
+            const telaAlvo = document.getElementById(`tela-${rota}`);
+            if (telaAlvo) telaAlvo.classList.add('ativa');
+
+            if(rota === 'produtos') carregarProdutos();
+            if(rota === 'carrinho') renderizarCarrinho();
+            if(rota === 'usuarios') carregarUsuarios();
+
+            // Muda a URL no navegador sem recarregar a página
+            if (adicionarAoHistorico) {
+                const url = rota === 'login' ? '/' : `/${rota}`;
+                window.history.pushState({ rota }, '', url);
+            }
+        }
+
+        // 2. Fazemos o botão "Voltar" e "Avançar" do navegador funcionar
+        window.addEventListener('popstate', (e) => {
+            if (e.state && e.state.rota) {
+                navegarPara(e.state.rota, false); // false para não duplicar no histórico
+            } else {
+                iniciarRoteamento();
+            }
+        });
+
+        // 3. Função que lê a URL atual ao abrir ou recarregar a página
+        function iniciarRoteamento() {
+            // Pega o caminho da URL (ex: "usuarios" de "/usuarios")
+            const path = window.location.pathname.substring(1);
+            const rotaInicial = path || 'login';
+
+            if (sessionStorage.getItem('token')) {
+                document.getElementById('navbar').style.display = 'flex';
+                // Se estiver logado e na raiz, vai para produtos. Senão, vai para a rota digitada.
+                navegarPara(rotaInicial === 'login' ? 'produtos' : rotaInicial, false);
+            } else {
+                navegarPara('login', false);
+            }
+        }
+
+        // --- PRODUTOS ---
+        async function carregarProdutos() {
+            const res = await fetch('/api/produtos', { headers: getAuthHeaders() });
+            const dados = await res.json();
+            
+            document.querySelector('#tabela-produtos tbody').innerHTML = dados.map(p => {
+                // CORREÇÃO APLICADA: Tratamento de aspas (Sanitização)
+                const nomeSeguro = p.nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                return `<tr>
+                    <td>${p.nome}</td><td>R$ ${p.preco.toFixed(2)}</td>
+                    <td><button class="btn" onclick="addCarrinho(${p.id}, '${nomeSeguro}', ${p.preco})">Adicionar</button></td>
+                </tr>`;
+            }).join('');
+        }
+
+        // --- CARRINHO ---
+        function addCarrinho(id, nome, preco) {
+            const item = carrinho.find(i => i.id === id);
+            if (item) { item.quantidade++; } 
+            else { carrinho.push({ id, nome, preco, quantidade: 1 }); }
+            
+            document.getElementById('carrinho-contador').textContent = carrinho.reduce((acc, i) => acc + i.quantidade, 0);
+            alert(`${nome} adicionado!`);
+        }
+
+        function renderizarCarrinho() {
+            const tbody = document.querySelector('#tabela-carrinho tbody');
+            let total = 0;
+            tbody.innerHTML = carrinho.map(i => {
+                const subtotal = i.preco * i.quantidade;
+                total += subtotal;
+                return `<tr><td>${i.nome}</td><td>${i.quantidade}</td><td>R$ ${i.preco.toFixed(2)}</td><td>R$ ${subtotal.toFixed(2)}</td></tr>`;
+            }).join('');
+            document.getElementById('total-carrinho').textContent = total.toFixed(2);
+        }
+
+        async function finalizarCompra() {
+            const valorPago = document.getElementById('valor-pago').value;
+            const msgBox = document.getElementById('mensagem-checkout');
+            if (carrinho.length === 0) return msgBox.innerHTML = `<p class="erro">Carrinho vazio.</p>`;
+            
+            const res = await fetch('/api/checkout', { 
+                method: 'POST', headers: getAuthHeaders(), 
+                body: JSON.stringify({ itensCarrinho: carrinho, valorPago: parseFloat(valorPago) }) 
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                msgBox.innerHTML = `<p class="sucesso">${data.message}</p>`;
+                carrinho = [];
+                document.getElementById('carrinho-contador').textContent = '0';
+                renderizarCarrinho();
+            } else {
+                msgBox.innerHTML = `<p class="erro">${data.message}</p>`;
+            }
+        }
+
+        // --- USUÁRIOS E AUTH ---
+        async function carregarUsuarios() {
+            const res = await fetch('/api/usuarios', { headers: getAuthHeaders() });
+            const dados = await res.json();
+            document.querySelector('#tabela-usuarios tbody').innerHTML = dados.map(u => 
+                `<tr><td>${u.id}</td><td>${u.nome}</td><td>${u.usuario}</td></tr>`
+            ).join('');
+        }
+
+        document.getElementById('form-login').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const res = await fetch('/api/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ usuario: document.getElementById('login-user').value, senha: document.getElementById('login-pass').value })
+            });
+            const data = await res.json();
+            if (data.success) {
+                sessionStorage.setItem('token', data.token);
+                document.getElementById('navbar').style.display = 'flex';
+                navegarPara('produtos');
+            } else {
+                document.getElementById('erro-login').textContent = data.message;
+            }
+        });
+
+        document.getElementById('form-usuario').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const res = await fetch('/api/usuarios', {
+                method: 'POST', headers: getAuthHeaders(),
+                body: JSON.stringify({ 
+                    nome: document.getElementById('usr-nome').value, 
+                    usuario: document.getElementById('usr-login').value, 
+                    senha: document.getElementById('usr-senha').value 
+                })
+            });
+            const data = await res.json();
+            if(data.success) {
+                alert("Usuário criado com sucesso!");
+                carregarUsuarios(); // Recarrega a tabela imediatamente
+                e.target.reset();
+            } else {
+                alert(data.message);
+            }
+        });
+
+        function fazerLogout() {
+            sessionStorage.clear();
+            document.getElementById('navbar').style.display = 'none';
+            navegarPara('login');
+        }
+
+        if (sessionStorage.getItem('token')) {
+            document.getElementById('navbar').style.display = 'flex';
+            navegarPara('produtos');
+        }
+
+        // Substitua a verificação antiga por esta linha:
+        iniciarRoteamento();
+
+        
+    </script>
+</body>
+</html>
